@@ -1,0 +1,35 @@
+FROM python:3.10-slim-bookworm
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip
+RUN pip install --no-cache-dir --upgrade pip
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    prometheus-client \
+    grpcio-health-checking==1.70.0
+
+# Install the NVCF agent
+COPY . /flytekit-nvcf/
+RUN pip install -e /flytekit-nvcf
+
+RUN pip install --no-cache-dir \
+    grpcio>=1.70.0 \
+    grpcio-tools>=1.70.0
+
+# Clean up
+RUN apt-get clean autoclean \
+    && apt-get autoremove --yes \
+    && rm -rf /var/lib/{apt,dpkg,cache,log}/ \
+    && :
+
+# Set environment variable to ensure NVCF plugin is imported
+ENV PYTHONPATH=/flytekit-nvcf
+
+# Set the entrypoint
+CMD ["pyflyte", "serve", "agent", "--port", "8000"]

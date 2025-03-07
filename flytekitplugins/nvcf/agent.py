@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 class NVCFAgent(AsyncAgentExecutorMixin, AsyncAgentBase):
     """Agent for executing tasks on NVIDIA Cloud Functions (NVCF) using the NGC SDK."""
 
+    name = "NVCF Agent"  # Define as class variable
+
     def __init__(self):
         """Initialize the NVCF agent."""
         self._task_type_name = "nvcf_task"
@@ -338,7 +340,7 @@ class NVCFAgent(AsyncAgentExecutorMixin, AsyncAgentBase):
         return datetime.datetime.now().isoformat()
 
 
-# Register the agent with Flyte
+# Create and register the agent
 agent = NVCFAgent()
 AgentRegistry.register(agent)
-logger.info("NVCF agent registered for task type: nvcf_task")
+logger.info(f"Registering NVCF agent with name: {agent.name}")

@@ -7,10 +7,10 @@ PLUGIN_NAME = "nvcf"
 microlib_name = f"flytekitplugins-{PLUGIN_NAME}"
 
 plugin_requires = [
-    "flytekit>1.10.7",
-    "ngcsdk>=0.1.0",
+    "flytekit>=1.15.0",
+    "ngcsdk>=3.61.0",
     "isodate>=0.6.1",
-    "flyteidl>1.10.7",
+    "flyteidl>=1.15.0",
     "simplejson>=3.17.0",
 ]
 
