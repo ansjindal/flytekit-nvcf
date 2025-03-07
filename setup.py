@@ -11,6 +11,7 @@ plugin_requires = [
     "ngcsdk>=0.1.0",
     "isodate>=0.6.1",
     "flyteidl>1.10.7",
+    "simplejson>=3.17.0",
 ]
 
 dev_requires = [
