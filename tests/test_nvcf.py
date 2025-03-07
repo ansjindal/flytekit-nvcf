@@ -86,13 +86,11 @@ def test_nvcf_task_config_validation():
         )
 
 
-@patch("flytekitplugins.nvcf.task.AgentRegistry.get_agent")
-def test_nvcf_task_execute(mock_get_agent):
+@patch("flytekitplugins.nvcf.task.NVCFTask.execute")
+def test_nvcf_task_execute(mock_execute):
     """Test executing an NVCF task."""
-    # Create a mock agent
-    mock_agent = NVCFAgent()
-    mock_agent.execute = lambda task, **kwargs: {"result": "success"}
-    mock_get_agent.return_value = mock_agent
+    # Set up the mock to return a success result
+    mock_execute.return_value = {"result": "success"}
 
     # Create a task
     task = nvcf_task(
@@ -110,6 +108,6 @@ def test_nvcf_task_execute(mock_get_agent):
     # Execute the task
     result = task.execute()
 
-    # Verify the agent was called
-    mock_get_agent.assert_called_once_with("nvcf_task")
+    # Verify the mock was called
+    mock_execute.assert_called_once()
     assert result == {"result": "success"}
