@@ -53,10 +53,7 @@ class NVCFAgent(AsyncAgentExecutorMixin, AsyncAgentBase):
         # Extract task configuration from custom attributes
         task_config = task_template.custom.get("nvcf_config", {})
         if not task_config:
-            raise ValueError(
-                "NVCF task configuration is missing. \
-                Please provide 'nvcf_config' in task definition."
-            )
+            raise ValueError("NVCF task configuration is missing.")
 
         # Create NGC client
         client = self._get_client(metadata)
