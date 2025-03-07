@@ -1,8 +1,8 @@
 # Flytekit NVIDIA Cloud Functions Plugin
 
-[![CI/CD](https://github.com/yourusername/flytekitplugins-nvcf/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/flytekitplugins-nvcf/actions/workflows/ci.yml)
+[![CI/CD](https://github.com/ansjindal/flytekitplugins-nvcf/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/flytekitplugins-nvcf/actions/workflows/ci.yml)
 [![PyPI version](https://badge.fury.io/py/flytekitplugins-nvcf.svg)](https://badge.fury.io/py/flytekitplugins-nvcf)
-[![codecov](https://codecov.io/gh/yourusername/flytekitplugins-nvcf/branch/main/graph/badge.svg)](https://codecov.io/gh/yourusername/flytekitplugins-nvcf)
+[![codecov](https://codecov.io/gh/ansjindal/flytekitplugins-nvcf/branch/main/graph/badge.svg)](https://codecov.io/gh/ansjindal/flytekitplugins-nvcf)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 A Flytekit plugin that enables running tasks on NVIDIA Cloud Functions (NVCF).
