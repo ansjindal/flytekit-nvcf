@@ -11,9 +11,11 @@ from flytekit.extend.backend.base_agent import (
     AgentRegistry,
     AsyncAgentBase,
     AsyncAgentExecutorMixin,
+    Resource,
 )
 from flytekit.models.literals import LiteralMap
 from flytekit.models.task import TaskTemplate
+from flyteidl.core.execution_pb2 import TaskExecution
 from isodate import parse_duration
 
 # Import NGC SDK
@@ -22,7 +24,17 @@ from nvcf.api.deployment_spec import GPUSpecification
 
 from flytekitplugins.nvcf.models import NVCFMetadata
 
+# Configure logging
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Create console handler if it doesn't exist
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
 
 
 class NVCFAgent(AsyncAgentExecutorMixin, AsyncAgentBase):
@@ -47,9 +59,24 @@ class NVCFAgent(AsyncAgentExecutorMixin, AsyncAgentBase):
         return client
 
     async def create(
-        self, ctx: FlyteContext, task_template: TaskTemplate, inputs: Optional[LiteralMap] = None
+        self,
+        task_template: TaskTemplate,
+        inputs: Optional[LiteralMap] = None,
+        output_prefix: str = None,
+        task_execution_metadata: Optional[Dict[str, Any]] = None,
+        **kwargs
     ) -> NVCFMetadata:
-        """Submit a task to NVCF using NGC SDK."""
+        """Submit a task to NVCF using NGC SDK.
+
+        Args:
+            task_template: Task template containing configuration
+            inputs: Optional input literals
+            output_prefix: Optional output prefix
+            task_execution_metadata: Optional task execution metadata
+
+        Returns:
+            NVCFMetadata containing task information
+        """
         metadata = self._get_metadata(task_template)
 
         # Extract task configuration from custom attributes
@@ -153,104 +180,109 @@ class NVCFAgent(AsyncAgentExecutorMixin, AsyncAgentBase):
             logger.error(f"Failed to create NVCF task: {str(e)}")
             raise RuntimeError(f"Failed to create NVCF task: {str(e)}")
 
-    async def get(
-        self, ctx: FlyteContext, resource_meta: NVCFMetadata, task_template: TaskTemplate
-    ) -> NVCFMetadata:
+    async def get(self, resource_meta: NVCFMetadata, **kwargs) -> Resource:
         """Get the status of a NVCF task using NGC SDK."""
         task_id = resource_meta.task_id
-
         if not task_id:
-            raise ValueError("Task ID is missing in resource metadata")
+            logger.warning("Task ID is missing in resource metadata")
+            return Resource(
+                phase=TaskExecution.UNDEFINED,
+                message="Task ID is missing in resource metadata",
+            )
 
         # Create NGC client
         client = self._get_client(resource_meta)
-
         try:
-            # Run in a thread to avoid blocking the event loop
-            loop = asyncio.get_event_loop()
-            task_data = await loop.run_in_executor(
-                None, lambda: client.cloud_function.tasks.info(task_id)
-            )
+            # Use synchronous call since it works reliably with Flyte UI
+            task_data = client.cloud_function.tasks.info(task_id)
 
             status = task_data.task.status
-            percent_complete = (
-                task_data.task.percentComplete if hasattr(task_data.task, "percentComplete") else 0
-            )
-
-            # Map NVCF status to Flyte phase
             phase, _ = self._map_status_to_phase(status)  # Ignore phase_version
+            logger.info(f"Task {task_id}: Status: {status} Mapped to Flyte phase: {TaskExecution.Phase.Name(phase)}")
 
-            # Check if task has completed and retrieve results if needed
+            if status == "FAILED":
+                return Resource(
+                    phase=phase,
+                    message="Task execution failed"
+                )
+
             outputs = None
             if status == "COMPLETED":
-                outputs = await self._get_task_results(client, task_id)
+                logger.info(f"Task {task_id}: Task completed successfully, retrieving results")
+                # try:
+                #     # Use synchronous call for results too
+                #     outputs = list(client.cloud_function.tasks.results(task_id))
+                #     if outputs:
+                #         logger.info(f"Task {task_id}: Retrieved results successfully")
+                # except Exception as e:
+                #     logger.warning(f"Failed to retrieve task results: {str(e)}")
 
-            # Collect events but don't use them yet
-            await self._get_task_events(client, task_id)
-
-            # Update the metadata with the latest status
-            resource_meta.update_status(
-                status=status,
-                percent_complete=percent_complete,
-                last_updated_at=task_data.task.lastUpdatedAt
-                if hasattr(task_data.task, "lastUpdatedAt")
-                else None,
+            return Resource(
+                phase=phase,
+                message=str(status),
+                outputs=outputs if outputs else None,
             )
-
-            # Store additional information in the metadata
-            resource_meta.phase = phase
-            resource_meta.outputs = outputs
-
-            return resource_meta
         except Exception as e:
             logger.error(f"Failed to get NVCF task status: {str(e)}")
-            raise RuntimeError(f"Failed to get NVCF task status: {str(e)}")
-
-    async def _get_task_results(self, client: Client, task_id: str) -> List[Dict[str, Any]]:
-        """Retrieve the results of a completed task."""
-        try:
-            # Run in a thread to avoid blocking the event loop
-            loop = asyncio.get_event_loop()
-            results = await loop.run_in_executor(
-                None, lambda: list(client.cloud_function.tasks.results(task_id))
+            return Resource(
+                phase=TaskExecution.FAILED,
+                message=f"Unable to determine task status: {str(e)}",
             )
-            return results
-        except Exception as e:
-            logger.warning(f"Failed to retrieve task results: {str(e)}")
-            return []
 
-    async def _get_task_events(self, client: Client, task_id: str) -> List[Dict[str, Any]]:
-        """Retrieve the event logs for a task."""
-        try:
-            # Run in a thread to avoid blocking the event loop
-            loop = asyncio.get_event_loop()
-            events = await loop.run_in_executor(
-                None, lambda: list(client.cloud_function.tasks.events(task_id))
-            )
-            return events
-        except Exception as e:
-            logger.warning(f"Failed to retrieve task events: {str(e)}")
-            return []
+    # async def _get_task_results(self, client: Client, task_id: str) -> List[Dict[str, Any]]:
+    #     """Retrieve the results of a completed task."""
+    #     try:
+    #         # Run in a thread to avoid blocking the event loop
+    #         loop = asyncio.get_event_loop()
+    #         results = await loop.run_in_executor(
+    #             None, lambda: list(client.cloud_function.tasks.results(task_id))
+    #         )
+    #         return results
+    #     except Exception as e:
+    #         logger.warning(f"Failed to retrieve task results: {str(e)}")
+    #         return []
+
+    # async def _get_task_events(self, client: Client, task_id: str) -> List[Dict[str, Any]]:
+    #     """Retrieve the event logs for a task."""
+    #     try:
+    #         events = await asyncio.wait_for(
+    #             asyncio.to_thread(lambda: list(client.cloud_function.tasks.events(task_id))),
+    #             timeout=2.0
+    #         )
+    #         return events
+    #     except asyncio.TimeoutError:
+    #         logger.warning(f"Task {task_id}: Events retrieval timed out")
+    #         return []
+    #     except Exception as e:
+    #         logger.warning(f"Failed to retrieve task events: {str(e)}")
+    #         return []
 
     def _map_status_to_phase(self, status: str) -> tuple:
-        """Map NVCF task status to Flyte execution phase."""
+        """Map NVCF status to Flyte execution phase.
+
+        Returns:
+            tuple: (TaskExecution phase, phase version)
+            Phase version is used to determine the order of states when multiple states map to the same phase.
+        """
+        # Log the incoming status for debugging
+        logger.debug(f"Mapping NVCF status: {status}")
+
         if status == "QUEUED":
-            return "QUEUED", 0
-        elif status == "LAUNCHED":
-            return "RUNNING", 1
-        elif status == "RUNNING":
-            return "RUNNING", 2
+            return TaskExecution.QUEUED, 0
+        elif status in ["LAUNCHED", "RUNNING"]:
+            return TaskExecution.RUNNING, 0
         elif status == "COMPLETED":
-            return "SUCCEEDED", 0
-        elif status in ["ERRORED", "EXCEEDED_MAX_RUNTIME_DURATION", "EXCEEDED_MAX_QUEUED_DURATION"]:
-            return "FAILED", 0
+            return TaskExecution.SUCCEEDED, 0
+        elif status in ["FAILED", "ERRORED", "EXCEEDED_MAX_RUNTIME_DURATION", "EXCEEDED_MAX_QUEUED_DURATION"]:
+            return TaskExecution.FAILED, 0
         elif status == "CANCELED":
-            return "ABORTED", 0
+            return TaskExecution.ABORTED, 0
         else:
-            return "UNKNOWN", 0
+            logger.warning(f"Unknown NVCF status: {status}, mapping to UNDEFINED")
+            return TaskExecution.UNDEFINED, 0
 
     async def delete(
-        self, ctx: FlyteContext, resource_meta: NVCFMetadata, task_template: TaskTemplate
+        self, resource_meta: NVCFMetadata, **kwargs
     ) -> None:
         """Cancel and delete a NVCF task using NGC SDK."""
         task_id = resource_meta.task_id

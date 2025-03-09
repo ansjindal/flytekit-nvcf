@@ -11,23 +11,36 @@ from flytekitplugins.nvcf.models import NVCFTaskConfig
 class NVCFTask(PythonTask):
     """Task implementation for NVCF tasks."""
 
-    def __init__(self, name: str, task_config: NVCFTaskConfig, **kwargs):
+    _TASK_TYPE = "nvcf_task"
+
+    def __init__(
+        self,
+        name: str,
+        task_config: NVCFTaskConfig,
+        interface: Optional[Interface] = None,
+        metadata: Optional[TaskMetadata] = None,
+        **kwargs,
+    ):
         """Initialize NVCF task.
 
         Args:
             name: Task name
             task_config: NVCF task configuration
+            interface: Task interface
+            metadata: Task metadata
             **kwargs: Additional task parameters
         """
         self._config = task_config
 
-        metadata = kwargs.pop("metadata", TaskMetadata())
-
-        # Define a simple interface - inputs and outputs can be customized as needed
-        interface = kwargs.pop("interface", Interface())
+        metadata = metadata or TaskMetadata()
+        interface = interface or Interface()
 
         super().__init__(
-            name=name, metadata=metadata, interface=interface, task_type="nvcf_task", **kwargs
+            name=name,
+            metadata=metadata,
+            interface=interface,
+            task_type=self._TASK_TYPE,
+            **kwargs,
         )
 
     def get_custom(self, settings):
@@ -39,10 +52,6 @@ class NVCFTask(PythonTask):
             "nvcf_config": self._config.to_dict(),
         }
 
-    def get_container(self, settings):
-        """No container is needed as this runs via the agent."""
-        return None
-
     def execute(self, **kwargs) -> Any:
         """Execute the task locally via the agent."""
         # The agent will handle the actual execution
@@ -50,7 +59,7 @@ class NVCFTask(PythonTask):
         # Import here to avoid circular import
         from flytekit.extend.backend.base_agent import AgentRegistry
 
-        agent = AgentRegistry.get_agent("nvcf_task")
+        agent = AgentRegistry.get_agent(self._TASK_TYPE)
         if not agent:
             raise RuntimeError("NVCF agent is not registered")
 
