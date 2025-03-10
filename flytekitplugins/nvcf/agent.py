@@ -15,6 +15,7 @@ from flytekit.extend.backend.base_agent import (
 )
 from flytekit.models.literals import LiteralMap
 from flytekit.models.task import TaskTemplate
+from flytekit.models.literals import LiteralMap, Literal, Primitive
 from flyteidl.core.execution_pb2 import TaskExecution
 from isodate import parse_duration
 
@@ -194,8 +195,11 @@ class NVCFAgent(AsyncAgentExecutorMixin, AsyncAgentBase):
         client = self._get_client(resource_meta)
         try:
             # Use synchronous call since it works reliably with Flyte UI
-            task_data = client.cloud_function.tasks.info(task_id)
-
+            # task_data = client.cloud_function.tasks.info(task_id)
+            loop = asyncio.get_event_loop()
+            task_data = await loop.run_in_executor(
+                None, lambda: client.cloud_function.tasks.info(task_id)
+            )
             status = task_data.task.status
             phase, _ = self._map_status_to_phase(status)  # Ignore phase_version
             logger.info(f"Task {task_id}: Status: {status} Mapped to Flyte phase: {TaskExecution.Phase.Name(phase)}")
@@ -209,18 +213,16 @@ class NVCFAgent(AsyncAgentExecutorMixin, AsyncAgentBase):
             outputs = None
             if status == "COMPLETED":
                 logger.info(f"Task {task_id}: Task completed successfully, retrieving results")
-                # try:
-                #     # Use synchronous call for results too
-                #     outputs = list(client.cloud_function.tasks.results(task_id))
-                #     if outputs:
-                #         logger.info(f"Task {task_id}: Retrieved results successfully")
-                # except Exception as e:
-                #     logger.warning(f"Failed to retrieve task results: {str(e)}")
+                try:
+                    results = await self._get_task_results(client, task_id)
+                    logger.info(f"Task {task_id}: Retrieved results successfully, output: {results}")
+                except Exception as e:
+                    logger.warning(f"Failed to retrieve task results: {str(e)}")
 
             return Resource(
                 phase=phase,
                 message=str(status),
-                outputs=outputs if outputs else None,
+                outputs=outputs
             )
         except Exception as e:
             logger.error(f"Failed to get NVCF task status: {str(e)}")
@@ -229,33 +231,18 @@ class NVCFAgent(AsyncAgentExecutorMixin, AsyncAgentBase):
                 message=f"Unable to determine task status: {str(e)}",
             )
 
-    # async def _get_task_results(self, client: Client, task_id: str) -> List[Dict[str, Any]]:
-    #     """Retrieve the results of a completed task."""
-    #     try:
-    #         # Run in a thread to avoid blocking the event loop
-    #         loop = asyncio.get_event_loop()
-    #         results = await loop.run_in_executor(
-    #             None, lambda: list(client.cloud_function.tasks.results(task_id))
-    #         )
-    #         return results
-    #     except Exception as e:
-    #         logger.warning(f"Failed to retrieve task results: {str(e)}")
-    #         return []
-
-    # async def _get_task_events(self, client: Client, task_id: str) -> List[Dict[str, Any]]:
-    #     """Retrieve the event logs for a task."""
-    #     try:
-    #         events = await asyncio.wait_for(
-    #             asyncio.to_thread(lambda: list(client.cloud_function.tasks.events(task_id))),
-    #             timeout=2.0
-    #         )
-    #         return events
-    #     except asyncio.TimeoutError:
-    #         logger.warning(f"Task {task_id}: Events retrieval timed out")
-    #         return []
-    #     except Exception as e:
-    #         logger.warning(f"Failed to retrieve task events: {str(e)}")
-    #         return []
+    async def _get_task_results(self, client: Client, task_id: str) -> List[Dict[str, Any]]:
+        """Retrieve the results of a completed task."""
+        try:
+            # Run in a thread to avoid blocking the event loop
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None, lambda: list(client.cloud_function.tasks.results(task_id))
+            )
+            return results
+        except Exception as e:
+            logger.warning(f"Failed to retrieve task results: {str(e)}")
+            return []
 
     def _map_status_to_phase(self, status: str) -> tuple:
         """Map NVCF status to Flyte execution phase.
@@ -295,43 +282,42 @@ class NVCFAgent(AsyncAgentExecutorMixin, AsyncAgentBase):
         client = self._get_client(resource_meta)
 
         try:
-            # First try to cancel the task if it's still running
-            status = resource_meta.status
+            # First try to get task status
+            loop = asyncio.get_event_loop()
+            try:
+                task_data = await loop.run_in_executor(
+                    None, lambda: client.cloud_function.tasks.info(task_id)
+                )
+                status = task_data.task.status
+                phase, _ = self._map_status_to_phase(status)  # Ignore phase_version
+                logger.info(f"Task {task_id}: Status: {status} Mapped to Flyte phase: {TaskExecution.Phase.Name(phase)}")
+            except Exception as e:
+                logger.info(f"Could not get task status, task may be already deleted: {str(e)}")
+                return  # Return successfully if we can't get the task info
+
+            # Try to cancel if task is still running
             if status in ["QUEUED", "LAUNCHED", "RUNNING"]:
                 try:
-                    # Run in a thread to avoid blocking the event loop
-                    loop = asyncio.get_event_loop()
                     await loop.run_in_executor(
                         None, lambda: client.cloud_function.tasks.cancel(task_id)
                     )
                     logger.info(f"Canceled NVCF task with ID: {task_id}")
-
-                    # Add a small delay to allow the cancellation to take effect
-                    await asyncio.sleep(2)
-
+                    await asyncio.sleep(2)  # Give some time for cancellation to take effect
                 except Exception as e:
                     logger.warning(f"Failed to cancel task, proceeding to delete: {str(e)}")
 
-            # Then delete the task
+            # Try to delete the task
             try:
-                loop = asyncio.get_event_loop()
-                # Handle the case where delete returns an empty response
                 await loop.run_in_executor(None, lambda: self._safe_delete(client, task_id))
                 logger.info(f"Deleted NVCF task with ID: {task_id}")
             except Exception as e:
-                # If deletion fails, check if the task still exists
-                try:
-                    task_info = await loop.run_in_executor(
-                        None, lambda: client.cloud_function.tasks.info(task_id)
-                    )
-                    logger.error(f"Task still exists with status: {task_info.task.status}")
-                    raise RuntimeError(f"Failed to delete task: {str(e)}")
-                except Exception:
-                    # If we can't get task info, it might be already deleted
-                    logger.info(f"Task {task_id} appears to be already deleted or inaccessible")
+                logger.warning(f"Failed to delete task, but continuing: {str(e)}")
+                # Don't raise an exception here, as the task might already be deleted
+
         except Exception as e:
-            logger.error(f"Failed to delete NVCF task: {str(e)}")
-            raise RuntimeError(f"Failed to delete NVCF task: {str(e)}")
+            logger.error(f"Error during delete operation for task {task_id}: {str(e)}")
+
+
 
     def _safe_delete(self, client: Client, task_id: str) -> None:
         """Safely delete a task, handling empty responses."""
@@ -346,7 +332,7 @@ class NVCFAgent(AsyncAgentExecutorMixin, AsyncAgentBase):
             return None
         except Exception as e:
             # Re-raise any other exceptions
-            raise e
+            logger.warning(f"Failed to delete task, but continuing: {str(e)}")
 
     def _get_metadata(self, task_template: TaskTemplate) -> NVCFMetadata:
         """Extract NGC metadata from task template."""
