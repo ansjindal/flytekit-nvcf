@@ -15,7 +15,6 @@ from flytekit.extend.backend.base_agent import (
 )
 from flytekit.models.literals import LiteralMap
 from flytekit.models.task import TaskTemplate
-from flytekit.models.literals import LiteralMap, Literal, Primitive
 from flyteidl.core.execution_pb2 import TaskExecution
 from isodate import parse_duration
 
