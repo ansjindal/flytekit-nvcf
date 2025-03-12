@@ -63,3 +63,9 @@ pre-commit install
 # Run tests
 pytest
 ```
+
+## Build Agent ContainerImage
+
+```bash
+docker buildx build -t flytekitagent:v1 -f Dockerfile .
+```
