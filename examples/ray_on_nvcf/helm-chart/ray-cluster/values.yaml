@@ -1,0 +1,39 @@
+# Global settings can be defined here
+imagePullPolicy: Always
+
+# -- Settings for the optional Redis deployment for Ray GCS fault tolerance
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "5.0.8"
+
+# -- Head node configuration
+head:
+  replicas: 1 # Ray only supports one head node
+  image:
+    repository: rayproject/ray-ml
+    tag: "2.6.3-gpu"
+  resources:
+    limits:
+      cpu: "4"
+      memory: "8G"
+    requests:
+      cpu: "2"
+      memory: "4G"
+
+# # -- Worker node configuration
+worker:
+  replicas: 1 # Number of Ray worker pods
+  image:
+    repository: rayproject/ray-ml
+    tag: "2.6.3-gpu"
+  resources:
+    limits:
+      cpu: "4"
+      memory: "32G"
+      nvidia.com/gpu: 1
+    requests:
+      cpu: "4"
+      memory: "32G"
+      nvidia.com/gpu: 1

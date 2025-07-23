@@ -1,0 +1,79 @@
+# A "headless" service to provide a stable network identity for the StatefulSet.
+# Its name is now fixed to "ray-head-svc".
+apiVersion: v1
+kind: Service
+metadata:
+  name: ray-head-svc
+spec:
+  # clusterIP: None makes this a headless service, used for DNS discovery of pods.
+  clusterIP: None
+  ports:
+  - name: gcs-server
+    port: 6380
+  - name: client
+    port: 10001
+  - name: dashboard
+    port: 8265
+  - name: worker-port-1
+    port: 10002
+  - name: worker-port-2
+    port: 10003
+  - name: worker-port-3
+    port: 10004
+  - name: worker-port-4
+    port: 10005
+  selector:
+    # Selects the pods managed by the StatefulSet
+    app: ray-head
+---
+# The Ray head is now a StatefulSet for a stable identity.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  # The StatefulSet name is also fixed.
+  name: ray-head
+spec:
+  # This links the StatefulSet to its governing Service.
+  serviceName: "ray-head-svc"
+  replicas: {{ .Values.head.replicas }}
+  selector:
+    matchLabels:
+      app: ray-head
+  template:
+    metadata:
+      labels:
+        # The pod label must match the service selector and statefulset selector.
+        app: ray-head
+    spec:
+      restartPolicy: Always
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+      containers:
+        - name: ray-head
+          image: "{{ .Values.head.image.repository }}:{{ .Values.head.image.tag }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: [ "/bin/bash", "-c", "--" ]
+          args:
+            - "ray start --head --port=6380 --num-cpus=$MY_CPU_REQUEST --dashboard-host=0.0.0.0 --object-manager-port=8076 --node-manager-port=8077 --dashboard-agent-grpc-port=8078 --dashboard-agent-listen-port=52365 --min-worker-port=10002 --max-worker-port=10020 --redis-password='' --block"
+          ports:
+            - containerPort: 6380
+            - containerPort: 10001
+            - containerPort: 8265
+            - containerPort: 10002
+            - containerPort: 10003
+            - containerPort: 10004
+            - containerPort: 10005
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+          env:
+            - name: RAY_REDIS_ADDRESS
+              value: {{ .Release.Name }}-redis:6379
+            - name: MY_CPU_REQUEST
+              valueFrom:
+                resourceFieldRef:
+                  resource: requests.cpu
+          resources:
+            {{- toYaml .Values.head.resources | nindent 12 }}
